@@ -1,0 +1,21 @@
+{
+  "active": "kimi-k2",
+  "models": {
+    "kimi-k2": {
+      "ANTHROPIC_AUTH_TOKEN": "sk-your-kimi-key-here",
+      "ANTHROPIC_BASE_URL": "https://api.moonshot.cn/anthropic"
+    },
+    "claude-sonnet": {
+      "ANTHROPIC_AUTH_TOKEN": "sk-your-claude-key-here",
+      "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    },
+    "claude-haiku": {
+      "ANTHROPIC_AUTH_TOKEN": "sk-your-claude-key-here",
+      "ANTHROPIC_BASE_URL": "https://api.anthropic.com"
+    },
+    "custom-model": {
+      "ANTHROPIC_AUTH_TOKEN": "sk-your-custom-key-here",
+      "ANTHROPIC_BASE_URL": "https://your-custom-api.com/anthropic"
+    }
+  }
+}
