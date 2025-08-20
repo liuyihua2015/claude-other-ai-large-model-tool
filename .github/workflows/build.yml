@@ -1,0 +1,22 @@
+# .github/workflows/build.yml
+name: Build Applications
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # build-windows:
+  #   runs-on: windows-latest
+  #   steps:
+  #     - uses: actions/checkout@v3
+  #     - name: Build Windows
+  #       run: python package_windows.py
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build macOS
+        run: python package_macos.py
