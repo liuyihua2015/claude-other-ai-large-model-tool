@@ -51,7 +51,7 @@ def install_dependencies():
     if current_platform == "windows":
         dependencies.extend(["pyinstaller", "winshell", "pywin32"])
     elif current_platform == "macos":
-        dependencies.extend(["py2app"])
+        dependencies.extend(["pyinstaller"])
 
     for dep in dependencies:
         try:
@@ -67,9 +67,9 @@ def run_platform_specific_script():
     current_platform = detect_platform()
 
     if current_platform == "windows":
-        script = "package_windows.py"
+        script = "package_windows_pyinstaller.py"
     elif current_platform == "macos":
-        script = "package_macos.py"
+        script = "package_macos_pyinstaller.py"
     else:
         print("❌ 不支持的平台:", platform.system())
         print("目前支持: Windows 和 macOS")

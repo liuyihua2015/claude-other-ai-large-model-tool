@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-macOS 平台打包脚本 - 生成 .dmg 磁盘映像
-使用 py2app 创建 macOS 应用程序包并打包成 .dmg
+macOS 平台打包脚本 - 使用 PyInstaller 减少包体积
+生成轻量级的 macOS 应用程序包
 """
 
 import os
@@ -23,14 +23,14 @@ def check_requirements():
     """检查必要的依赖是否已安装"""
     print("🔍 检查依赖...")
 
-    # 检查 py2app
+    # 检查 PyInstaller
     try:
-        import py2app
+        import PyInstaller
 
-        print("✅ py2app 已安装")
+        print("✅ PyInstaller 已安装")
     except ImportError:
-        print("❌ py2app 未安装，正在安装...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "py2app"])
+        print("❌ PyInstaller 未安装，正在安装...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
 
     # 检查 PyQt6
     try:
@@ -40,65 +40,6 @@ def check_requirements():
     except ImportError:
         print("❌ PyQt6 未安装，正在安装...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "PyQt6"])
-
-    # 检查 create-dmg
-    try:
-        subprocess.run(["create-dmg", "--version"], check=True, capture_output=True)
-        print("✅ create-dmg 已安装")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print("❌ create-dmg 未安装")
-        print("   安装方法: brew install create-dmg")
-        print("   或者使用内置的 hdiutil 创建 DMG")
-
-
-def create_setup_py():
-    """创建 py2app 的 setup.py 文件"""
-    setup_content = '''
-"""
-macOS 应用程序打包配置
-使用 py2app 创建 macOS 应用程序包
-"""
-
-from setuptools import setup
-
-APP = ['model_manager.py']
-DATA_FILES = [
-    ('examples', ['examples/config.json']),
-]
-OPTIONS = {
-    'argv_emulation': False,
-    'iconfile': 'assets/icon.icns',  # macOS 图标文件
-    'plist': {
-        'CFBundleName': 'Claude Model Manager',
-        'CFBundleDisplayName': 'Claude Model Manager',
-        'CFBundleGetInfoString': "Claude CLI 模型管理工具",
-        'CFBundleIdentifier': "com.claude-cli.model-manager",
-        'CFBundleVersion': "1.0.0",
-        'CFBundleShortVersionString': "1.0.0",
-        'NSHumanReadableCopyright': u"Copyright © 2024, Claude CLI Tools, All Rights Reserved",
-        'NSHighResolutionCapable': True,
-        'LSUIElement': False,  # 显示在 Dock 中
-        'NSPrincipalClass': 'NSApplication',
-        'LSApplicationCategoryType': 'public.app-category.utilities',
-        'NSApplicationAppleMenu': True,
-        'NSApplicationSupportsAutomaticTermination': True,
-        'NSAppTransportSecurity': True,
-    },
-    'packages': ['PyQt6'],
-    'includes': ['PyQt6.QtCore', 'PyQt6.QtGui', 'PyQt6.QtWidgets', "jaraco.text"],
-}
-
-setup(
-    app=APP,
-    data_files=DATA_FILES,
-    options={'py2app': OPTIONS},
-    setup_requires=['py2app'],
-)
-'''
-
-    with open("setup.py", "w") as f:
-        f.write(setup_content)
-    print("✅ 已创建 setup.py 配置文件")
 
 
 def safe_rmtree(path):
@@ -123,18 +64,34 @@ def safe_rmtree(path):
 
 
 def build_app():
-    """使用 py2app 构建 macOS 应用程序"""
-    print("🚀 开始构建 macOS 应用程序...")
+    """使用 PyInstaller 构建 macOS 应用程序"""
+    print("🚀 开始构建 macOS 应用程序（使用 PyInstaller）单文件模式 ...")
 
     # 清理之前的构建
     safe_rmtree("build")
     safe_rmtree("dist")
+    safe_rmtree("spec")
 
-    # 创建 setup.py
-    create_setup_py()
+    # PyInstaller 命令 - 优化配置以减少体积
+    cmd = [
+        "pyinstaller",
+        "--onefile",  # 打包成单个文件（更小的体积）
+        "--windowed",  # 窗口程序（无控制台）
+        "--name=Claude Model Manager",  # 应用程序名
+        "--icon=assets/icon.icns",  # macOS 图标文件
+        "--add-data=examples/config.json:examples",  # 添加配置文件
+        "--add-data=assets/icon.icns:assets",  # 添加图标文件
+        "--clean",  # 清理临时文件
+        "--noconfirm",  # 不确认覆盖
+        "--strip",  # 移除调试符号
+        "--optimize=2",  # Python 优化级别
+        "model_manager.py",  # 主程序文件
+    ]
 
-    # 构建命令
-    cmd = [sys.executable, "setup.py", "py2app"]
+    # 如果没有图标文件，移除图标参数
+    if not os.path.exists("assets/icon.icns"):
+        cmd = [arg for arg in cmd if not arg.startswith("--icon=")]
+        print("⚠️  未找到图标文件 assets/icon.icns，将使用默认图标")
 
     try:
         subprocess.check_call(cmd)
@@ -154,26 +111,14 @@ def build_app():
                         total_size += os.path.getsize(fp)
 
             print(f"📊 应用程序大小: {total_size / (1024*1024):.2f} MB")
-
             return app_path
         else:
-            # 检查其他可能的名称
-            possible_names = ["model_manager.app", "Claude Model Manager.app"]
-            for name in possible_names:
-                test_path = os.path.join("dist", name)
-                if os.path.exists(test_path):
-                    print(f"📁 应用程序位置: {os.path.abspath(test_path)}")
-
-                    # 计算应用程序大小
-                    total_size = 0
-                    for dirpath, dirnames, filenames in os.walk(test_path):
-                        for f in filenames:
-                            fp = os.path.join(dirpath, f)
-                            if os.path.exists(fp):
-                                total_size += os.path.getsize(fp)
-
-                    print(f"📊 应用程序大小: {total_size / (1024*1024):.2f} MB")
-                    return test_path
+            # 检查单个可执行文件
+            exe_path = os.path.join("dist", "Claude Model Manager")
+            if os.path.exists(exe_path):
+                print(f"📁 可执行文件位置: {os.path.abspath(exe_path)}")
+                print(f"📊 文件大小: {os.path.getsize(exe_path) / (1024*1024):.2f} MB")
+                return exe_path
 
             print("❌ 构建失败：未找到生成的应用程序")
             return None
@@ -183,17 +128,88 @@ def build_app():
         return None
 
 
+def build_app_bundle():
+    """使用 PyInstaller 构建 macOS .app 包（更完整的应用包）"""
+    print("🚀 开始构建 macOS .app 应用程序包...")
+
+    # 清理之前的构建
+    safe_rmtree("build")
+    safe_rmtree("dist")
+    safe_rmtree("spec")
+
+    # PyInstaller 命令 - 创建完整的 .app 包
+    cmd = [
+        "pyinstaller",
+        "model_manager.py",
+        "--onedir",
+        "--windowed",
+        "--name=Claude Model Manager",
+        "--icon=assets/icon.icns",
+        "--add-data=examples/config.json:examples",
+        "--add-data=assets/icon.icns:assets",
+        "--osx-bundle-identifier=com.claude-cli.model-manager",
+        "--clean",
+        "--noconfirm",
+        "--strip",
+        "--optimize=2",
+    ]
+
+    # 如果没有图标文件，移除图标参数
+    if not os.path.exists("assets/icon.icns"):
+        cmd = [arg for arg in cmd if not arg.startswith("--icon=")]
+        print("⚠️  未找到图标文件 assets/icon.icns，将使用默认图标")
+
+    try:
+        subprocess.check_call(cmd)
+        print("✅ .app 应用程序包构建完成！")
+
+        # 获取生成的应用程序路径
+        app_path = os.path.join("dist", "Claude Model Manager.app")
+        if os.path.exists(app_path):
+            print(f"📁 应用程序位置: {os.path.abspath(app_path)}")
+
+            # 计算应用程序大小
+            total_size = 0
+            for dirpath, dirnames, filenames in os.walk(app_path):
+                for f in filenames:
+                    fp = os.path.join(dirpath, f)
+                    if os.path.exists(fp):
+                        total_size += os.path.getsize(fp)
+
+            print(f"📊 应用程序大小: {total_size / (1024*1024):.2f} MB")
+            return app_path
+
+        print("❌ 构建失败：未找到生成的应用程序")
+        return None
+
+    except subprocess.CalledProcessError as e:
+        print(f"❌ 构建失败: {e}")
+        return None
+
+
 def debug_app_run(app_path):
-    """调试运行打包后的 .app 并输出日志"""
+    """调试运行打包后的应用程序"""
     print("\n🐞 开始调试运行应用程序...")
-    exe_path = os.path.join(
-        app_path, "Contents", "MacOS", os.path.splitext(os.path.basename(app_path))[0]
-    )
+
+    if app_path.endswith(".app"):
+        # 运行 .app 包
+        exe_path = os.path.join(app_path, "Contents", "MacOS", "Claude Model Manager")
+    else:
+        # 运行单个可执行文件
+        exe_path = app_path
+
     if not os.path.exists(exe_path):
         print(f"❌ 未找到可执行文件: {exe_path}")
         return
+
     try:
-        result = subprocess.run([exe_path], capture_output=True, text=True)
+        # 设置环境变量以避免 macOS 安全警告
+        env = os.environ.copy()
+        env["QT_MAC_WANTS_LAYER"] = "1"
+
+        result = subprocess.run(
+            [exe_path], capture_output=True, text=True, env=env, timeout=10
+        )
         print("📜 应用运行输出:")
         print(result.stdout)
         if result.stderr:
@@ -208,6 +224,8 @@ def debug_app_run(app_path):
                 log_file.write("\n=== 应用错误输出 ===\n")
                 log_file.write(result.stderr)
         print("📝 已将日志保存到 app_debug.log")
+    except subprocess.TimeoutExpired:
+        print("✅ 应用程序启动成功（运行超时，这是正常的）")
     except Exception as e:
         print(f"❌ 调试运行失败: {e}")
 
@@ -217,7 +235,7 @@ def create_dmg(app_path):
     print("\n📦 开始创建 .dmg 磁盘映像...")
 
     # 清理之前的 DMG
-    dmg_path = "dist/ClaudeModelManager.dmg"
+    dmg_path = "dist/Claude Model Manager.dmg"
     if os.path.exists(dmg_path):
         os.remove(dmg_path)
 
@@ -247,44 +265,47 @@ def create_dmg_with_create_dmg(app_path, dmg_path):
     os.makedirs(temp_dir)
 
     # 复制应用程序到临时目录
-    shutil.copytree(app_path, os.path.join(temp_dir, "Claude Model Manager.app"))
+    app_name = os.path.basename(app_path)
+    shutil.copytree(app_path, os.path.join(temp_dir, app_name))
 
-    # create-dmg 命令
+    # 组装 create-dmg 命令参数，避免空字符串导致的错误
     cmd = [
         "create-dmg",
         "--volname",
         "Claude Model Manager",
-        "--volicon",
-        "assets/icon.icns" if os.path.exists("assets/icon.icns") else "",
-        "--background",
-        (
-            "assets/dmg-background.png"
-            if os.path.exists("assets/dmg-background.png")
-            else ""
-        ),
-        "--window-pos",
-        "200",
-        "120",
-        "--window-size",
-        "800",
-        "400",
-        "--icon-size",
-        "100",
-        "--icon",
-        "Claude Model Manager.app",
-        "200",
-        "190",
-        "--hide-extension",
-        "Claude Model Manager.app",
-        "--app-drop-link",
-        "600",
-        "185",
-        dmg_path,
-        temp_dir,
     ]
 
-    # 移除不存在的参数
-    cmd = [arg for arg in cmd if arg != ""]
+    icon_path = "assets/icon.icns"
+    if os.path.exists(icon_path):
+        cmd.extend(["--volicon", icon_path])
+
+    background_path = "assets/dmg-background.png"
+    if os.path.exists(background_path):
+        cmd.extend(["--background", background_path])
+
+    cmd.extend(
+        [
+            "--window-pos",
+            "200",
+            "120",
+            "--window-size",
+            "800",
+            "400",
+            "--icon-size",
+            "100",
+            "--icon",
+            app_name,
+            "200",
+            "190",
+            "--hide-extension",
+            app_name,
+            "--app-drop-link",
+            "600",
+            "185",
+            dmg_path,
+            temp_dir,
+        ]
+    )
 
     try:
         subprocess.check_call(cmd)
@@ -294,6 +315,9 @@ def create_dmg_with_create_dmg(app_path, dmg_path):
         # 清理临时目录
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
+
+        # 注释掉自动打开 DMG 的代码
+        # subprocess.run(["open", dmg_path])
 
     except subprocess.CalledProcessError as e:
         print(f"❌ create-dmg 创建失败: {e}")
@@ -312,7 +336,8 @@ def create_dmg_with_hdiutil(app_path, dmg_path):
     os.makedirs(temp_dir)
 
     # 复制应用程序到临时目录
-    shutil.copytree(app_path, os.path.join(temp_dir, "Claude Model Manager.app"))
+    app_name = os.path.basename(app_path)
+    shutil.copytree(app_path, os.path.join(temp_dir, app_name))
 
     # 创建 Applications 别名
     applications_link = os.path.join(temp_dir, "Applications")
@@ -328,10 +353,11 @@ def create_dmg_with_hdiutil(app_path, dmg_path):
                 total_size += os.path.getsize(fp)
 
     # 添加额外空间
-    dmg_size = max(total_size * 1.5, 100 * 1024 * 1024)  # 至少 100MB
+    dmg_size = max(total_size * 1.5, 50 * 1024 * 1024)  # 至少 50MB（PyInstaller包更小）
 
     try:
-        # 创建 DMG
+        # 创建未压缩的临时 DMG
+        temp_dmg = dmg_path + ".temp.dmg"
         subprocess.check_call(
             [
                 "hdiutil",
@@ -341,12 +367,27 @@ def create_dmg_with_hdiutil(app_path, dmg_path):
                 "-volname",
                 "Claude Model Manager",
                 "-format",
-                "UDZO",
+                "UDRW",
                 "-size",
                 f"{int(dmg_size / 1024 / 1024)}m",
+                temp_dmg,
+            ]
+        )
+        # 压缩 DMG
+        subprocess.check_call(
+            [
+                "hdiutil",
+                "convert",
+                temp_dmg,
+                "-format",
+                "UDZO",
+                "-o",
                 dmg_path,
             ]
         )
+        # 删除临时 DMG
+        if os.path.exists(temp_dmg):
+            os.remove(temp_dmg)
 
         print("✅ DMG 创建完成！")
         print(f"📁 DMG 文件位置: {os.path.abspath(dmg_path)}")
@@ -357,21 +398,6 @@ def create_dmg_with_hdiutil(app_path, dmg_path):
 
     except subprocess.CalledProcessError as e:
         print(f"❌ hdiutil 创建失败: {e}")
-
-
-def create_app_icon():
-    """创建 macOS 应用程序图标（如果缺少）"""
-    icon_path = "assets/icon.icns"
-    if not os.path.exists(icon_path):
-        print("⚠️  未找到 macOS 图标文件 assets/icon.icns")
-        print("   建议创建 1024x1024 的 ICNS 图标文件")
-
-        # 创建简单的图标目录结构（可选）
-        os.makedirs("assets", exist_ok=True)
-
-        # 提示用户创建图标
-        print("   可以使用在线工具将 PNG 转换为 ICNS")
-        print("   或使用 macOS 的 iconutil 工具创建")
 
 
 def codesign_app(app_path):
@@ -426,37 +452,69 @@ def notarize_app(app_path):
     )
 
 
+# def show_size_comparison():
+#     """显示与 py2app 的大小对比"""
+#     print("\n📊 PyInstaller vs py2app 大小对比:")
+#     print("   PyInstaller 通常比 py2app 减少 50-70% 的体积")
+#     print("   - py2app 典型大小: 200-400 MB")
+#     print("   - PyInstaller 典型大小: 50-150 MB")
+#     print("   - 单文件模式: 30-80 MB")
+
+
+def upx_compress(app_path):
+    """使用 UPX 压缩可执行文件"""
+    exe_path = os.path.join(app_path, "Contents", "MacOS", "Claude Model Manager")
+    if os.path.exists(exe_path):
+        print(f"🔧 压缩可执行文件: {exe_path}")
+        subprocess.run(["upx", "--best", "--lzma", exe_path])
+        print("✅ 压缩完成")
+    else:
+        print("⚠️ 未找到可执行文件，跳过 UPX 压缩")
+
+
 def main():
     """主函数"""
-    print("🍎 macOS 平台打包脚本")
+    print("🍎 macOS 平台打包脚本 (PyInstaller 版)")
     print("=" * 50)
 
     # 检查依赖
     check_requirements()
 
-    # 检查图标
-    create_app_icon()
+    # 选择构建模式
+    print("\n🔧 选择构建模式:")
+    print("1. 单文件模式 (--onefile) - 最小体积，单个可执行文件")
+    # print("2. 应用包模式 (--onedir) - 完整 .app 包，更好的 macOS 集成")
 
-    # 构建应用程序
-    app_path = build_app()
+    # choice = input("请选择 (1/2，默认1): ").strip()
+    # if choice == "2":
+    #     app_path = build_app_bundle()  # 应用包模式
+    # else:
+    app_path = build_app()  # 单文件模式
 
     if app_path:
         print("\n🎉 应用程序构建成功！")
         print("📁 应用程序位置:", os.path.abspath(app_path))
 
-        debug_app_run(app_path)
+        # 调试运行
+        # debug_app_run(app_path)
 
         # 代码签名（可选）
         # codesign_app(app_path)
 
-        # # 公证（可选）
+        # 公证（可选）
         # notarize_app(app_path)
+
+        # upx压缩
+        # upx_compress(app_path)
 
         # 创建 DMG
         create_dmg(app_path)
 
+        # 创建基本 DMG.
+        # create_dmg_with_hdiutil(app_path)
+
         print("\n🎊 打包完成！")
-        print("📦 DMG 文件: ClaudeModelManager.dmg")
+        print("📦 DMG 文件: Claude Model Manager.dmg")
 
     else:
         print("\n❌ 打包失败，请检查错误信息")
