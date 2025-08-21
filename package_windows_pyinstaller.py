@@ -51,7 +51,7 @@ def safe_rmtree(path):
         print(f"权限不足，尝试使用 sudo 删除 {path}")
         subprocess.run(["sudo", "rm", "-rf", path])
     except Exception as e:
-        print(f "删除 {path} 时出错: {e}")
+        print(f"删除 {path} 时出错: {e}")
 
 
 def build_windows():
