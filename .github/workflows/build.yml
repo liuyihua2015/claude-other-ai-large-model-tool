@@ -45,3 +45,5 @@ jobs:
 
       - name: Build Windows app
         run: python package_windows_pyinstaller.py
+        env:
+          PYTHONIOENCODING: utf-8
