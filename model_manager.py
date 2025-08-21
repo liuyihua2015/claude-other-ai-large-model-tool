@@ -54,6 +54,12 @@ def save_config(config):
 def update_env_file(active_model, model_data):
     lines = [f'export {k}="{v}"' for k, v in model_data.items()]
     content = "\n".join(lines)
+    echo_lines = [
+        'echo "✅ 已加载 ANTHROPIC 环境变量:"',
+    ]
+    for k in model_data.keys():
+        echo_lines.append(f'echo "{k}=${k}"')
+    content = content + "\n\n" + "\n".join(echo_lines) + "\n"
     with open(ENV_FILE, "w") as f:
         f.write(content)
     print(f"✅ 已更新环境变量文件: {ENV_FILE}")
@@ -295,6 +301,21 @@ class ModelManager(QMainWindow):
         active = self.config["active"]
         update_env_file(active, self.config["models"][active])
         self.refresh_model_list()
+        # 自动写入 shell 配置文件，确保每次新终端自动加载
+        shell_configs = [Path.home() / ".zshrc", Path.home() / ".bashrc"]
+        source_line = f"source {ENV_FILE}\n"
+        for shell_config in shell_configs:
+            try:
+                if shell_config.exists():
+                    content = shell_config.read_text()
+                else:
+                    content = ""
+                if source_line not in content:
+                    with open(shell_config, "a") as f:
+                        f.write("\n# Auto-load Claude Model Manager env\n")
+                        f.write(source_line)
+            except Exception as e:
+                print(f"无法写入 {shell_config}: {e}")
         QMessageBox.information(self, "提示", "已初始化全局配置并刷新 env.sh")
 
     def copy_refresh_command(self):
@@ -312,6 +333,7 @@ class ModelManager(QMainWindow):
             if sys.platform == "darwin":
                 # macOS: 智能检测iTerm或Terminal并执行source
                 self._macos_auto_source(env_file)
+                subprocess.run("env | grep ANTHROPIC", shell=True, check=False)
 
             elif sys.platform.startswith("win"):
                 # Windows: 使用PowerShell打开新窗口并执行source
