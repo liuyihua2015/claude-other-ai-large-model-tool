@@ -103,7 +103,7 @@ def build_windows():
 
 def main():
     """主函数"""
-    print("🪟 Windows 平台打包脚本 (PyInstaller 版)")
+    print("Windows 平台打包脚本 (PyInstaller 版)")
     print("=" * 50)
 
     # 检查依赖
