@@ -12,24 +12,24 @@ from pathlib import Path
 
 def check_requirements():
     """检查必要的依赖是否已安装"""
-    print("🔍 检查依赖...")
+    print("检查依赖...")
 
     # 检查 PyInstaller
     try:
         import PyInstaller
 
-        print("✅ PyInstaller 已安装")
+        print("PyInstaller 已安装")
     except ImportError:
-        print("❌ PyInstaller 未安装，正在安装...")
+        print("PyInstaller 未安装，正在安装...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
 
     # 检查 PyQt6
     try:
         import PyQt6
 
-        print("✅ PyQt6 已安装")
+        print("PyQt6 已安装")
     except ImportError:
-        print("❌ PyQt6 未安装，正在安装...")
+        print("PyQt6 未安装，正在安装...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "PyQt6"])
 
 
@@ -48,15 +48,15 @@ def safe_rmtree(path):
     try:
         shutil.rmtree(path, onerror=handle_remove_readonly)
     except PermissionError:
-        print(f"⚠️ 权限不足，尝试使用 sudo 删除 {path}")
+        print(f"权限不足，尝试使用 sudo 删除 {path}")
         subprocess.run(["sudo", "rm", "-rf", path])
     except Exception as e:
-        print(f"⚠️ 删除 {path} 时出错: {e}")
+        print(f "删除 {path} 时出错: {e}")
 
 
 def build_windows():
     """使用 PyInstaller 构建 Windows 可执行文件"""
-    print("🚀 开始构建 Windows 应用程序（使用 PyInstaller）单文件模式 ...")
+    print("开始构建 Windows 应用程序（使用 PyInstaller）单文件模式 ...")
 
     # 清理之前的构建
     safe_rmtree("build")
@@ -80,24 +80,24 @@ def build_windows():
     # 如果没有图标文件，移除图标参数
     if not os.path.exists("assets/icon.ico"):
         cmd = [arg for arg in cmd if not arg.startswith("--icon=")]
-        print("⚠️  未找到图标文件 assets/icon.ico，将使用默认图标")
+        print("未找到图标文件 assets/icon.ico，将使用默认图标")
 
     try:
         subprocess.check_call(cmd)
-        print("✅ Windows 应用程序构建完成！")
+        print("Windows 应用程序构建完成！")
 
         # 获取生成的可执行文件路径
         exe_path = os.path.join("dist", "Claude Model Manager.exe")
         if os.path.exists(exe_path):
-            print(f"📁 可执行文件位置: {os.path.abspath(exe_path)}")
-            print(f"📊 文件大小: {os.path.getsize(exe_path) / (1024*1024):.2f} MB")
+            print(f"可执行文件位置: {os.path.abspath(exe_path)}")
+            print(f"文件大小: {os.path.getsize(exe_path) / (1024*1024):.2f} MB")
             return exe_path
 
-        print("❌ 构建失败：未找到生成的可执行文件")
+        print("构建失败：未找到生成的可执行文件")
         return None
 
     except subprocess.CalledProcessError as e:
-        print(f"❌ 构建失败: {e}")
+        print(f"构建失败: {e}")
         return None
 
 
@@ -112,12 +112,12 @@ def main():
     exe_path = build_windows()
 
     if exe_path:
-        print("\n🎉 应用程序构建成功！")
-        print("📁 可执行文件位置:", os.path.abspath(exe_path))
-        print(f"📊 可执行文件大小: {os.path.getsize(exe_path) / (1024*1024):.2f} MB")
-        print("\n🎊 打包完成！")
+        print("\n应用程序构建成功！")
+        print("可执行文件位置:", os.path.abspath(exe_path))
+        print(f"可执行文件大小: {os.path.getsize(exe_path) / (1024*1024):.2f} MB")
+        print("\n打包完成！")
     else:
-        print("\n❌ 打包失败，请检查错误信息")
+        print("\n打包失败，请检查错误信息")
         sys.exit(1)
 
 
