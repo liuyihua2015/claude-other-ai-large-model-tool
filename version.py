@@ -2,7 +2,7 @@
 Version management for Claude Model Manager
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.2"  # 这是应用的固定版本号
 
 
 def get_current_version():

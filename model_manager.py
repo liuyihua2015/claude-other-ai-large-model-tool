@@ -113,10 +113,14 @@ class ModelManager(QMainWindow):
         app_menu.addAction(update_settings_action)
 
     def show_about_dialog(self):
+        from version import get_current_version
 
         msg = QMessageBox(self)
         msg.setWindowTitle("About Claude Model Manager")
-        msg.setText("Claude CLI 模型管理工具\n版本: 1.0.0\n© 2025 Claude CLI Tools")
+        current_version = get_current_version()
+        msg.setText(
+            f"Claude CLI 模型管理工具\n版本: {current_version}\n© 2025 Claude CLI Tools"
+        )
         icon = QIcon("assets/icon.icns")
         msg.setIconPixmap(icon.pixmap(128, 128))
         msg.exec()

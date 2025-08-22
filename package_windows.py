@@ -45,6 +45,7 @@ def check_requirements():
 def build_exe():
     """使用 PyInstaller 构建 Windows 可执行文件"""
     print("🚀 开始构建 Windows 可执行文件...")
+    
 
     # 清理之前的构建
     if os.path.exists("dist"):
@@ -149,7 +150,7 @@ def create_installer():
     nsis_script = f"""
 ; Claude Model Manager 安装程序
 !define APP_NAME "Claude Model Manager"
-!define APP_VERSION "1.0.0"
+!define APP_VERSION "1.0.2"
 !define APP_PUBLISHER "Claude CLI Tools"
 !define APP_URL "https://github.com/liuyihua2015/claude-other-ai-large-model-tool"
 !define APP_EXE "ClaudeModelManager.exe"
