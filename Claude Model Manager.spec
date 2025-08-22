@@ -1,5 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+sys.path.append('.')
+from version import __version__
 
 a = Analysis(
     ['model_manager.py'],
@@ -21,8 +24,8 @@ exe = EXE(
     a.scripts,
     a.binaries,
     a.datas,
-    [('O', None, 'OPTION'), ('O', None, 'OPTION')],
-    name='ClaudeModelManager',
+    [],
+    name='Claude Model Manager',
     debug=False,
     bootloader_ignore_signals=False,
     strip=True,
@@ -37,9 +40,18 @@ exe = EXE(
     entitlements_file=None,
     icon=['assets/icon.icns'],
 )
+
 app = BUNDLE(
     exe,
-    name='ClaudeModelManager.app',
+    name='Claude Model Manager.app',
     icon='assets/icon.icns',
-    bundle_identifier=None,
+    bundle_identifier='com.claude-cli.model-manager',
+    version=__version__,
+    info_plist={
+        'CFBundleShortVersionString': __version__,
+        'CFBundleVersion': __version__,
+        'NSHumanReadableCopyright': '© 2025 Claude CLI Tools',
+        'NSHighResolutionCapable': True,
+        'LSMinimumSystemVersion': '10.12',
+    },
 )

@@ -67,25 +67,86 @@ def build_app():
     """使用 PyInstaller 构建 macOS 应用程序"""
     print("🚀 开始构建 macOS 应用程序（使用 PyInstaller）单文件模式 ...")
 
+    # 读取版本信息
+    sys.path.append('.')
+    from version import __version__
+    print(f"📋 应用版本: {__version__}")
+
     # 清理之前的构建
     safe_rmtree("build")
     safe_rmtree("dist")
     safe_rmtree("spec")
 
-    # PyInstaller 命令 - 优化配置以减少体积
+    # 创建自定义spec文件
+    spec_content = f'''# -*- mode: python ; coding: utf-8 -*-
+
+import sys
+sys.path.append('.')
+from version import __version__
+
+a = Analysis(
+    ['model_manager.py'],
+    pathex=[],
+    binaries=[],
+    datas=[('examples/config.json', 'examples'), ('assets/icon.icns', 'assets')],
+    hiddenimports=[],
+    hookspath=[],
+    hooksconfig={{}},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=2,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='Claude Model Manager',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=True,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=['assets/icon.icns'],
+)
+
+app = BUNDLE(
+    exe,
+    name='Claude Model Manager.app',
+    icon='assets/icon.icns',
+    bundle_identifier='com.claude-cli.model-manager',
+    version=__version__,
+    info_plist={{
+        'CFBundleShortVersionString': __version__,
+        'CFBundleVersion': __version__,
+        'NSHumanReadableCopyright': '© 2025 Claude CLI Tools',
+        'NSHighResolutionCapable': True,
+        'LSMinimumSystemVersion': '10.12',
+    }},
+)
+'''
+
+    # 写入spec文件
+    with open('Claude Model Manager.spec', 'w', encoding='utf-8') as f:
+        f.write(spec_content)
+
+    # PyInstaller 命令 - 使用spec文件
     cmd = [
         "pyinstaller",
-        "--onefile",  # 打包成单个文件（更小的体积）
-        "--windowed",  # 窗口程序（无控制台）
-        "--name=Claude Model Manager",  # 应用程序名
-        "--icon=assets/icon.icns",  # macOS 图标文件
-        "--add-data=examples/config.json:examples",  # 添加配置文件
-        "--add-data=assets/icon.icns:assets",  # 添加图标文件
-        "--clean",  # 清理临时文件
-        "--noconfirm",  # 不确认覆盖
-        "--strip",  # 移除调试符号
-        "--optimize=2",  # Python 优化级别
-        "model_manager.py",  # 主程序文件
+        "--clean",
+        "--noconfirm",
+        "Claude Model Manager.spec"
     ]
 
     # 如果没有图标文件，移除图标参数
@@ -132,6 +193,11 @@ def build_app_bundle():
     """使用 PyInstaller 构建 macOS .app 包（更完整的应用包）"""
     print("🚀 开始构建 macOS .app 应用程序包...")
 
+    # 读取版本信息
+    sys.path.append('.')
+    from version import __version__
+    print(f"📋 应用版本: {__version__}")
+
     # 清理之前的构建
     safe_rmtree("build")
     safe_rmtree("dist")
@@ -148,6 +214,7 @@ def build_app_bundle():
         "--add-data=examples/config.json:examples",
         "--add-data=assets/icon.icns:assets",
         "--osx-bundle-identifier=com.claude-cli.model-manager",
+        f"--osx-bundle-version={__version__}",
         "--clean",
         "--noconfirm",
         "--strip",
