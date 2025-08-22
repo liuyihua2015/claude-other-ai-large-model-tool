@@ -1,4 +1,4 @@
-import sys, os, json, subprocess
+import sys, os, json, subprocess, requests
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -16,8 +16,13 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QProgressBar,
+    QFrame,
+    QGroupBox,
+    QRadioButton,
 )
-from PyQt6.QtGui import QClipboard, QIcon, QAction
+from PyQt6.QtGui import QClipboard, QIcon, QAction, QColor, QFont
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer, Qt
 
 CONFIG_DIR = Path.home() / ".claude-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -34,6 +39,169 @@ DEFAULT_CONFIG = {
 }
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
+
+
+# --- Claude CLI 管理器 ---
+class ClaudeManager:
+    """Claude CLI 安装、更新和版本管理（统一任务接口）"""
+
+    GITHUB_REPO = "anthropics/claude-cli"
+    GITHUB_API = "https://api.github.com"
+
+    def __init__(self):
+        self.install_dir = CONFIG_DIR / "claude-cli"
+        self.claude_executable = self._get_executable_path()
+        self.version_cache = {}
+        self.last_check_time = 0
+
+    def _get_executable_path(self):
+        if sys.platform.startswith("win"):
+            return self.install_dir / "claude.exe"
+        else:
+            return self.install_dir / "claude"
+
+    def is_installed(self):
+        try:
+            if sys.platform.startswith("win"):
+                result = subprocess.run(
+                    [
+                        "powershell",
+                        "-Command",
+                        "Get-Command claude -ErrorAction SilentlyContinue",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                return result.returncode == 0 and result.stdout.strip() != ""
+            else:
+                # macOS / Linux
+                command = f"export PATH=$PATH:/usr/local/bin && command -v claude"
+                result = subprocess.run(
+                    ["/bin/bash", "-c", command],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                return result.returncode == 0 and result.stdout.strip() != ""
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+
+    def get_installed_version(self):
+        if not self.is_installed():
+            return None
+        try:
+            result = subprocess.run(
+                ["claude", "--version"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            version_line = result.stdout.strip()
+            if " " in version_line:
+                return version_line.split()[1]
+            return None
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+
+    def run_task(self, task, version=None, progress_callback=None, method="npm"):
+        """统一处理安装、更新、卸载任务
+        task: "install", "update", "uninstall"
+        """
+        try:
+            if task == "install":
+                if progress_callback:
+                    progress_callback(0, "开始安装...")
+                if method == "npm":
+                    if progress_callback:
+                        progress_callback(10, "正在通过 npm 安装...")
+                    subprocess.run(
+                        ["npm", "install", "-g", "@anthropic-ai/claude-code"],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    if progress_callback:
+                        progress_callback(100, "安装完成！")
+                    return True, "安装成功！"
+                elif method == "native":
+                    if progress_callback:
+                        progress_callback(10, "正在通过原生脚本安装...")
+                    if sys.platform.startswith("win"):
+                        script_url = "https://claude.ai/install.ps1"
+                        subprocess.run(
+                            ["powershell", "-Command", f"irm {script_url} | iex"],
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                    else:
+                        script_url = "https://claude.ai/install.sh"
+                        subprocess.run(
+                            ["curl", "-fsSL", script_url, "|", "bash"],
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                    if progress_callback:
+                        progress_callback(100, "安装完成！")
+                    return True, "安装成功！"
+                else:
+                    raise Exception("未知安装方法")
+            elif task == "update":
+                if not self.is_installed():
+                    raise Exception("Claude CLI 未安装，请先安装")
+                if progress_callback:
+                    progress_callback(0, "正在更新...")
+                    progress_callback(10, "通过 npm 更新...")
+                subprocess.run(
+                    ["npm", "update", "-g", "@anthropic-ai/claude-code"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                if progress_callback:
+                    progress_callback(100, "更新完成！")
+                return True, "更新成功！"
+            elif task == "uninstall":
+                subprocess.run(
+                    ["npm", "uninstall", "-g", "@anthropic-ai/claude-code"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                return True, "卸载成功！"
+            else:
+                raise Exception("未知任务类型")
+        except subprocess.CalledProcessError as e:
+            msg = e.stderr or e.stdout or str(e)
+            if task == "update" and "up to date" in msg:
+                return False, "已经是最新版本"
+            return False, f"{task}失败: {msg}"
+        except Exception as e:
+            return False, f"{task}失败: {e}"
+
+
+# --- Claude CLI 统一任务线程 ---
+class ClaudeTaskThread(QThread):
+    """Claude CLI 安装/更新/卸载线程（统一）"""
+
+    progress = pyqtSignal(int, str)
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, claude_manager, task, version=None, method="npm"):
+        super().__init__()
+        self.claude_manager = claude_manager
+        self.task = task  # "install" "update" "uninstall"
+        self.version = version
+        self.method = method
+
+    def run(self):
+        success, msg = self.claude_manager.run_task(
+            self.task, self.version, self.progress.emit, self.method
+        )
+        self.finished.emit(success, msg)
 
 
 # --- 配置文件读写 ---
@@ -70,7 +238,7 @@ class ModelManager(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Claude / Kimi-K2 模型管理")
-        self.resize(600, 600)
+        self.resize(600, 700)
         self.config = load_config()
         self.current_model = None
         self.init_ui()
@@ -103,11 +271,40 @@ class ModelManager(QMainWindow):
         central.setLayout(layout)
         self.setCentralWidget(central)
 
+        # 官方文档内容文本
+        self.doc_text = (
+            "步骤 1：安装 Claude Code\n\n"
+            "NPM 安装\n"
+            "如果您已安装 Node.js 18 或更新版本：\n"
+            "npm install -g @anthropic-ai/claude-code\n\n"
+            "原生安装\n"
+            "或者，尝试我们新的原生安装，现在处于测试版。\n\n"
+            "macOS、Linux、WSL：\n"
+            "curl -fsSL claude.ai/install.sh | bash\n"
+            "Windows PowerShell：\n"
+            "irm https://claude.ai/install.ps1 | iex\n\n"
+            "步骤 2：开始您的第一个会话\n"
+            "在任何项目目录中打开终端并启动 Claude Code：\n"
+            "cd /path/to/your/project\n"
+            "claude\n"
+            "您将在新的交互式会话中看到 Claude Code 提示符：\n"
+            "✻ 欢迎使用 Claude Code！\n\n"
+            "官方地址: https://docs.anthropic.com/zh-CN/docs/claude-code/quickstart"
+        )
+
+        # 分隔线
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(line)
+
         # 顶部目录路径和打开按钮
         dir_layout = QHBoxLayout()
         config_directory = str(CONFIG_DIR)
         dir_label = QLabel(f"Claude配置目录: {config_directory}")
         open_btn = QPushButton("打开目录")
+        doc_btn = QPushButton("官方文档与安装步骤")
+        manual_btn = QPushButton("Claude Code 命令说明书")
 
         def open_directory():
             if sys.platform.startswith("win"):
@@ -120,7 +317,80 @@ class ModelManager(QMainWindow):
         open_btn.clicked.connect(open_directory)
         dir_layout.addWidget(dir_label)
         dir_layout.addWidget(open_btn)
+        dir_layout.addWidget(doc_btn)
+        dir_layout.addWidget(manual_btn)
         layout.addLayout(dir_layout)
+
+        def show_doc_dialog():
+            dialog = QDialog(self)
+            dialog.setWindowTitle("官方文档与安装步骤")
+            dialog.setMinimumWidth(500)
+            vbox = QVBoxLayout(dialog)
+            doc_view = QTextEdit()
+            doc_view.setReadOnly(True)
+            doc_view.setPlainText(self.doc_text)
+            doc_view.setMinimumHeight(400)
+            vbox.addWidget(doc_view)
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+            button_box.accepted.connect(dialog.accept)
+            vbox.addWidget(button_box)
+            dialog.exec()
+
+        doc_btn.clicked.connect(show_doc_dialog)
+
+        def show_manual_dialog():
+            info_text = (
+                "/add-dir 添加新的工作目录\n"
+                "/agents 管理代理配置\n"
+                "/bashes 列出并管理后台bash shell\n"
+                "/bug 提交关于Claude Code的反馈\n"
+                "/clear 清除对话历史并释放上下文\n"
+                "/compact 清除对话历史但在上下文中保留摘要。可选：/compact [摘要指令]\n"
+                "/config 打开配置面板\n"
+                "/cost 显示当前会话的总成本和持续时间\n"
+                "/doctor 诊断并验证您的Claude Code安装和设置\n"
+                "/exit 退出REPL\n"
+                "/export 将当前对话导出到文件或剪贴板\n"
+                "/help 显示帮助和可用命令\n"
+                "/hooks 管理工具事件的钩子配置\n"
+                "/ide 管理IDE集成并显示状态\n"
+                "/init 使用代码库文档初始化新的CLAUDE.md文件\n"
+                "/install-github-app 为仓库设置Claude GitHub Actions\n"
+                "/login 使用您的Anthropic账户登录\n"
+                "/logout 从您的Anthropic账户登出\n"
+                "/mcp 管理MCP服务器\n"
+                "/memory 编辑Claude内存文件\n"
+                "/migrate-installer 从全局npm安装迁移到本地安装\n"
+                "/model 设置Claude Code的AI模型\n"
+                "/output-style 直接设置输出样式或从选择菜单中设置\n"
+                "/output-style:new 创建自定义输出样式\n"
+                "/permissions 管理允许和拒绝工具权限规则\n"
+                "/pr-comments 获取GitHub拉取请求的评论\n"
+                "/release-notes 查看发布说明\n"
+                "/resume 恢复对话\n"
+                "/review 审查拉取请求\n"
+                "/security-review 完成当前分支上待处理更改的安全审查\n"
+                "/status 显示Claude Code状态，包括版本、模型、账户、API连接和工具状态\n"
+                "/statusline 设置Claude Code的状态行UI\n"
+                "/terminal-setup 安装Shift+Enter键绑定用于换行\n"
+                "/upgrade 升级到Max以获得更高的速率限制和更多的Opus\n"
+                "/vim 在Vim和普通编辑模式之间切换\n"
+            )
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Claude Code 命令说明书")
+            dialog.setMinimumWidth(500)
+            vbox = QVBoxLayout(dialog)
+            text_view = QTextEdit()
+            text_view.setReadOnly(True)
+            text_view.setPlainText(info_text)
+            text_view.setMinimumHeight(400)
+            vbox.addWidget(text_view)
+            button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+            button_box.accepted.connect(dialog.accept)
+            vbox.addWidget(button_box)
+            dialog.exec()
+
+        manual_btn.clicked.connect(show_manual_dialog)
 
         # 模型列表
         self.model_list = QListWidget()
@@ -128,9 +398,10 @@ class ModelManager(QMainWindow):
         layout.addWidget(QLabel("模型列表:"))
         layout.addWidget(self.model_list)
 
-        # 模型详情可编辑
+        # 模型详情只读
         self.detail_text = QTextEdit()
-        layout.addWidget(QLabel("模型详情（可编辑）:"))
+        self.detail_text.setReadOnly(True)
+        layout.addWidget(QLabel("模型详情（只读）:"))
         layout.addWidget(self.detail_text)
 
         # 操作按钮
@@ -139,11 +410,11 @@ class ModelManager(QMainWindow):
         select_btn.clicked.connect(self.select_model)
         del_btn = QPushButton("删除选中模型")
         del_btn.clicked.connect(self.delete_model)
-        save_btn = QPushButton("保存修改")
-        save_btn.clicked.connect(self.save_model_changes)
+        edit_btn = QPushButton("修改")
+        edit_btn.clicked.connect(self.edit_model_dialog)
         btn_layout.addWidget(select_btn)
         btn_layout.addWidget(del_btn)
-        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(edit_btn)
         layout.addLayout(btn_layout)
 
         # 添加新模型按钮
@@ -161,7 +432,6 @@ class ModelManager(QMainWindow):
         bottom_layout.addWidget(copy_btn)
         layout.addLayout(bottom_layout)
 
-        self.setLayout(layout)
         self.refresh_model_list()
 
     def refresh_model_list(self):
@@ -176,37 +446,82 @@ class ModelManager(QMainWindow):
         name = item.text().replace(" (Active)", "")
         self.current_model = name
         model = self.config["models"].get(name, {})
-        active = "(Active)" if name == self.config.get("active") else ""
-        detail = f"模型名称: {name} {active}\n"
+        detail = f"模型名称: {name}\n"
         for k, v in model.items():
             detail += f"{k}: {v}\n"
         self.detail_text.setText(detail)
 
-    def save_model_changes(self):
+    def edit_model_dialog(self):
         if not self.current_model:
             QMessageBox.warning(self, "错误", "请选择要修改的模型")
             return
-        text = self.detail_text.toPlainText()
-        lines = text.splitlines()
-        new_name = lines[0].replace("模型名称:", "").replace("(Active)", "").strip()
-        new_data = {}
-        for line in lines[1:]:
-            if ": " in line:
-                k, v = line.split(": ", 1)
-                new_data[k.strip()] = v.strip()
-        # 删除旧模型名
-        if new_name != self.current_model:
-            self.config["models"].pop(self.current_model)
-        self.config["models"][new_name] = new_data
-        # 如果修改的是 active
-        if self.config.get("active") == self.current_model:
-            self.config["active"] = new_name
-        save_config(self.config)
-        # 更新 env.sh
-        active = self.config["active"]
-        update_env_file(active, self.config["models"][active])
-        self.refresh_model_list()
-        QMessageBox.information(self, "提示", f"模型 {new_name} 修改成功并刷新 env.sh")
+        name = self.current_model
+        model = self.config["models"].get(name, {})
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"编辑模型: {name}")
+        dialog.setFixedWidth(self.width())
+        form = QFormLayout(dialog)
+        # 不允许编辑模型名称
+        name_label = QLabel(name)
+        form.addRow("模型名称:", name_label)
+        token_edit = QLineEdit(model.get("ANTHROPIC_AUTH_TOKEN", ""))
+        url_edit = QLineEdit(model.get("ANTHROPIC_BASE_URL", ""))
+        min_width = 380
+        token_edit.setMinimumWidth(min_width)
+        url_edit.setMinimumWidth(min_width)
+        form.addRow("ANTHROPIC_AUTH_TOKEN:", token_edit)
+        form.addRow("ANTHROPIC_BASE_URL:", url_edit)
+
+        # 按钮：取消、确定修改、修改并切换当前模型
+        button_box = QDialogButtonBox()
+        btn_cancel = QPushButton("取消")
+        btn_ok = QPushButton("确定修改")
+        btn_ok_switch = QPushButton("修改并切换当前模型")
+        button_box.addButton(btn_cancel, QDialogButtonBox.ButtonRole.RejectRole)
+        button_box.addButton(btn_ok, QDialogButtonBox.ButtonRole.AcceptRole)
+        button_box.addButton(btn_ok_switch, QDialogButtonBox.ButtonRole.ActionRole)
+        form.addRow(button_box)
+
+        def do_save_model_changes(set_active=False):
+            token = token_edit.text().strip()
+            url = url_edit.text().strip()
+            if not token or not url:
+                QMessageBox.warning(
+                    dialog,
+                    "错误",
+                    "ANTHROPIC_AUTH_TOKEN 和 ANTHROPIC_BASE_URL 不能为空",
+                )
+                return
+            self.config["models"][name] = {
+                "ANTHROPIC_AUTH_TOKEN": token,
+                "ANTHROPIC_BASE_URL": url,
+            }
+            if set_active:
+                self.config["active"] = name
+            save_config(self.config)
+            # 更新 env.sh
+            active = self.config["active"]
+            update_env_file(active, self.config["models"][active])
+            self.refresh_model_list()
+            if set_active:
+                self.auto_source_terminal()
+                QMessageBox.information(
+                    self,
+                    "提示",
+                    f"模型 {name} 修改成功，并已切换为当前模型并刷新 env.sh",
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "提示",
+                    f"模型 {name} 修改成功并刷新 env.sh",
+                )
+            dialog.accept()
+
+        btn_cancel.clicked.connect(dialog.reject)
+        btn_ok.clicked.connect(lambda: do_save_model_changes(False))
+        btn_ok_switch.clicked.connect(lambda: do_save_model_changes(True))
+        dialog.exec()
 
     def select_model(self):
         item = self.model_list.currentItem()
@@ -264,7 +579,7 @@ class ModelManager(QMainWindow):
         url_edit.setMinimumWidth(min_width)
         form.addRow("模型名称:", name_edit)
         form.addRow("ANTHROPIC_AUTH_TOKEN:", token_edit)
-        form.addRow("BASE_URL:", url_edit)
+        form.addRow("ANTHROPIC_BASE_URL:", url_edit)
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -278,7 +593,7 @@ class ModelManager(QMainWindow):
                 QMessageBox.warning(
                     dialog,
                     "错误",
-                    "模型名称、ANTHROPIC_AUTH_TOKEN 和 BASE_URL 不能为空",
+                    "模型名称、ANTHROPIC_AUTH_TOKEN 和 ANTHROPIC_BASE_URL 不能为空",
                 )
                 return
             self.config["models"][name] = {
@@ -471,6 +786,8 @@ end tell
                     subprocess.run(["open", "-a", "Terminal", env_file], check=False)
                 except:
                     pass
+
+    # Claude CLI 管理区域和相关功能已移除，改为仅显示官方文档和安装步骤
 
 
 if __name__ == "__main__":
