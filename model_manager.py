@@ -24,6 +24,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QClipboard, QIcon, QAction, QColor, QFont
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer, Qt
 
+# 导入更新检查器
+from update_checker import UpdateManager
+
 CONFIG_DIR = Path.home() / ".claude-cli"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 ENV_FILE = CONFIG_DIR / "env.sh"
@@ -39,169 +42,6 @@ DEFAULT_CONFIG = {
 }
 
 os.makedirs(CONFIG_DIR, exist_ok=True)
-
-
-# --- Claude CLI 管理器 ---
-class ClaudeManager:
-    """Claude CLI 安装、更新和版本管理（统一任务接口）"""
-
-    GITHUB_REPO = "anthropics/claude-cli"
-    GITHUB_API = "https://api.github.com"
-
-    def __init__(self):
-        self.install_dir = CONFIG_DIR / "claude-cli"
-        self.claude_executable = self._get_executable_path()
-        self.version_cache = {}
-        self.last_check_time = 0
-
-    def _get_executable_path(self):
-        if sys.platform.startswith("win"):
-            return self.install_dir / "claude.exe"
-        else:
-            return self.install_dir / "claude"
-
-    def is_installed(self):
-        try:
-            if sys.platform.startswith("win"):
-                result = subprocess.run(
-                    [
-                        "powershell",
-                        "-Command",
-                        "Get-Command claude -ErrorAction SilentlyContinue",
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                return result.returncode == 0 and result.stdout.strip() != ""
-            else:
-                # macOS / Linux
-                command = f"export PATH=$PATH:/usr/local/bin && command -v claude"
-                result = subprocess.run(
-                    ["/bin/bash", "-c", command],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                return result.returncode == 0 and result.stdout.strip() != ""
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return False
-
-    def get_installed_version(self):
-        if not self.is_installed():
-            return None
-        try:
-            result = subprocess.run(
-                ["claude", "--version"],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            version_line = result.stdout.strip()
-            if " " in version_line:
-                return version_line.split()[1]
-            return None
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return None
-
-    def run_task(self, task, version=None, progress_callback=None, method="npm"):
-        """统一处理安装、更新、卸载任务
-        task: "install", "update", "uninstall"
-        """
-        try:
-            if task == "install":
-                if progress_callback:
-                    progress_callback(0, "开始安装...")
-                if method == "npm":
-                    if progress_callback:
-                        progress_callback(10, "正在通过 npm 安装...")
-                    subprocess.run(
-                        ["npm", "install", "-g", "@anthropic-ai/claude-code"],
-                        capture_output=True,
-                        text=True,
-                        check=True,
-                    )
-                    if progress_callback:
-                        progress_callback(100, "安装完成！")
-                    return True, "安装成功！"
-                elif method == "native":
-                    if progress_callback:
-                        progress_callback(10, "正在通过原生脚本安装...")
-                    if sys.platform.startswith("win"):
-                        script_url = "https://claude.ai/install.ps1"
-                        subprocess.run(
-                            ["powershell", "-Command", f"irm {script_url} | iex"],
-                            capture_output=True,
-                            text=True,
-                            check=True,
-                        )
-                    else:
-                        script_url = "https://claude.ai/install.sh"
-                        subprocess.run(
-                            ["curl", "-fsSL", script_url, "|", "bash"],
-                            shell=True,
-                            capture_output=True,
-                            text=True,
-                            check=True,
-                        )
-                    if progress_callback:
-                        progress_callback(100, "安装完成！")
-                    return True, "安装成功！"
-                else:
-                    raise Exception("未知安装方法")
-            elif task == "update":
-                if not self.is_installed():
-                    raise Exception("Claude CLI 未安装，请先安装")
-                if progress_callback:
-                    progress_callback(0, "正在更新...")
-                    progress_callback(10, "通过 npm 更新...")
-                subprocess.run(
-                    ["npm", "update", "-g", "@anthropic-ai/claude-code"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                if progress_callback:
-                    progress_callback(100, "更新完成！")
-                return True, "更新成功！"
-            elif task == "uninstall":
-                subprocess.run(
-                    ["npm", "uninstall", "-g", "@anthropic-ai/claude-code"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                return True, "卸载成功！"
-            else:
-                raise Exception("未知任务类型")
-        except subprocess.CalledProcessError as e:
-            msg = e.stderr or e.stdout or str(e)
-            if task == "update" and "up to date" in msg:
-                return False, "已经是最新版本"
-            return False, f"{task}失败: {msg}"
-        except Exception as e:
-            return False, f"{task}失败: {e}"
-
-
-# --- Claude CLI 统一任务线程 ---
-class ClaudeTaskThread(QThread):
-    """Claude CLI 安装/更新/卸载线程（统一）"""
-
-    progress = pyqtSignal(int, str)
-    finished = pyqtSignal(bool, str)
-
-    def __init__(self, claude_manager, task, version=None, method="npm"):
-        super().__init__()
-        self.claude_manager = claude_manager
-        self.task = task  # "install" "update" "uninstall"
-        self.version = version
-        self.method = method
-
-    def run(self):
-        success, msg = self.claude_manager.run_task(
-            self.task, self.version, self.progress.emit, self.method
-        )
-        self.finished.emit(success, msg)
 
 
 # --- 配置文件读写 ---
@@ -241,20 +81,36 @@ class ModelManager(QMainWindow):
         self.resize(600, 700)
         self.config = load_config()
         self.current_model = None
+        self.update_manager = UpdateManager(self)
         self.init_ui()
         self.init_menu()
+        self.update_manager.start_auto_check()
 
     def init_menu(self):
         # 获取菜单栏
         menu_bar = self.menuBar()
 
-        # macOS 默认应用菜单
+        # macOS 默认应用菜单 - 使用标准名称确保系统识别
         app_menu = menu_bar.addMenu("Claude Model Manager")
 
-        # 关于应用
-        about_action = QAction("About Claude Model Manager", self)
+        # 关于应用 - 使用标准About名称
+        about_action = QAction("关于", self)
+        about_action.setMenuRole(QAction.MenuRole.AboutRole)
         about_action.triggered.connect(self.show_about_dialog)
         app_menu.addAction(about_action)
+
+        # 添加分隔符
+        app_menu.addSeparator()
+
+        # 检查更新 - 添加到应用菜单
+        check_update_action = QAction("检查更新", self)
+        check_update_action.triggered.connect(self.check_for_updates_manual)
+        app_menu.addAction(check_update_action)
+
+        # 更新设置 - 添加到应用菜单
+        update_settings_action = QAction("更新设置", self)
+        update_settings_action.triggered.connect(self.show_update_settings)
+        app_menu.addAction(update_settings_action)
 
     def show_about_dialog(self):
 
@@ -264,6 +120,14 @@ class ModelManager(QMainWindow):
         icon = QIcon("assets/icon.icns")
         msg.setIconPixmap(icon.pixmap(128, 128))
         msg.exec()
+
+    def check_for_updates_manual(self):
+        """手动触发更新检查"""
+        self.update_manager.check_for_updates(manual=True)
+
+    def show_update_settings(self):
+        """显示更新设置对话框"""
+        self.update_manager.show_update_settings()
 
     def init_ui(self):
         central = QWidget()
@@ -793,10 +657,10 @@ end tell
 if __name__ == "__main__":
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Claude Model Manager")
-    app.setApplicationVersion("1.0.0")
-    app.setOrganizationName("Claude CLI Tools")
-    app.setWindowIcon(QIcon("assets/icon.icns"))
+    # app.setApplicationName("Claude Model Manager")
+    # app.setApplicationVersion("1.0.0")
+    # app.setOrganizationName("Claude CLI Tools")
+    # app.setWindowIcon(QIcon("assets/icon.icns"))
 
     window = ModelManager()
     window.show()
